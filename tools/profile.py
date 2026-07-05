@@ -8,7 +8,7 @@ from tools.paths import AVATARS_DIR
 from tools.avatar_utils import get_avatar_photo
 
 
-def create_profile(parent):
+def create_profile(parent, on_logout=None):
     theme = get_theme()
     frame = tk.Frame(parent, bg=theme["bg"])
     user = get_current_user()
@@ -24,7 +24,7 @@ def create_profile(parent):
             return
         img_tk = get_avatar_photo(nick, theme["accent"], size=120)
         avatar_label.image = img_tk  # держим ссылку, иначе tkinter соберёт мусор
-        avatar_label.config(image=img_tk)
+        avatar_label.config(image=img_tk)   
 
     def change_avatar():
         if not nick:
@@ -53,9 +53,11 @@ def create_profile(parent):
 
     # ФУНКЦИЯ ДЛЯ КНОПКИ ВЫХОДА
     def handle_logout():
-        if messagebox.askyesno("Выход", "Вы уверены, что хотите выйти из аккаунта?"):
-            logout_user()
-            parent.winfo_toplevel().destroy()
+            if messagebox.askyesno("Выход", "Вы уверены, что хотите выйти из аккаунта?"):
+                logout_user()
+                frame.destroy()  # <-- Уничтожаем фрейм профиля вместо всего приложения
+                if on_logout:
+                    on_logout()  # <-- Переходим на экран авторизации
 
     tk.Button(frame, text="Выйти из аккаунта", command=handle_logout,
               bg=theme["danger"], fg="white", font=("Arial", 10, "bold"), relief=tk.FLAT, padx=10, pady=5).pack(pady=30)

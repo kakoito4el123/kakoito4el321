@@ -33,7 +33,7 @@ DARK = {
 }
 
 # Текущая тема хранится тут же, чтобы все модули могли к ней обращаться
-_current = LIGHT
+_current = DARK
 
 
 def get_theme():

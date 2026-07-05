@@ -2,12 +2,44 @@ import tkinter as tk
 from tkinter import messagebox, simpledialog, filedialog
 from PIL import Image, ImageTk
 import io
+import time  # <--- Добавили импорт времени
 from tools.chat_db import *
-from tools.auth_db import get_current_user
+# Импортируем добавленные нами функции управления активностью
+from tools.auth_db import get_current_user, update_user_activity, get_user_last_seen
 from tools.theme import get_theme
 from tools.avatar_utils import get_avatar_photo
 
-def create_chat(parent):
+def calculate_online_status(last_seen_timestamp):
+    """Вычисляет цвет индикатора и текстовое описание времени активности"""
+    if last_seen_timestamp is None:
+        return "gray", "был(а) давно"
+        
+    now = time.time()
+    diff_seconds = int(now - last_seen_timestamp)
+    
+    # Меньше 60 секунд — пишем "в сети" и ставим зеленый маркер
+    if diff_seconds < 5:
+        return "#25D366", "в сети"  # Приятный зеленый цвет WhatsApp
+        
+    diff_minutes = diff_seconds // 60
+    if diff_minutes < 2:
+        return "gray", "был(а) только что"
+    elif diff_minutes < 5:
+        return "gray", "был(а) 2 мин. назад"
+    elif diff_minutes < 15:
+        return "gray", f"был(а) {diff_minutes} мин. назад"
+    elif diff_minutes < 60:
+        return "gray", "был(а) менее часа назад"
+        
+    diff_hours = diff_minutes // 60
+    if diff_hours < 24:
+        if diff_hours == 1:
+            return "gray", "был(а) более часа назад"
+        return "gray", f"был(а) {diff_hours} ч. назад"
+        
+    return "gray", "был(а) давно"
+
+def create_chat(parent, on_logout=None):
     theme = get_theme()
     user_info = get_current_user()
     if not user_info: return tk.Label(parent, text="Ошибка авторизации")
@@ -17,6 +49,10 @@ def create_chat(parent):
     last_msg_count = 0
     reply_data = None
     avatar_refs = []  # чтобы PhotoImage не удалялись сборщиком мусора
+    
+    # Хранилище ссылок на виджеты статусов друзей, чтобы обновлять их динамически
+    # Структура: { 'friend_nick': { 'dot': canvas_widget, 'status_label': label_widget, 'row': frame_widget } }
+    status_widgets = {}
 
     main_frame = tk.Frame(parent, bg=theme["chat_bg"])
 
@@ -27,8 +63,6 @@ def create_chat(parent):
 
     tk.Label(sidebar, text=" Чаты", font=("Segoe UI", 14, "bold"), bg=theme["chat_sidebar_bg"], fg=theme["accent"]).pack(pady=15, anchor="w")
 
-    # Нижний блок кнопок пакуем ПЕРВЫМ — так у него гарантированно останется место снизу,
-    # а список друзей (со scroll + expand=True) займёт всё, что осталось.
     bottom_bar = tk.Frame(sidebar, bg=theme["chat_sidebar_bg"])
     bottom_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
@@ -37,7 +71,6 @@ def create_chat(parent):
     tk.Button(bottom_bar, text="+ Добавить друга", bg="#25D366", fg="white", font=("Segoe UI", 9, "bold"), relief=tk.FLAT,
               command=lambda: [send_friend_request(my_nick, simpledialog.askstring("Поиск", "Номер:")), refresh_friends()]).pack(fill=tk.X, padx=10, pady=10)
 
-    # Скроллируемый список друзей (кастомные строки вместо обычного Listbox — так можно вставить аватарки)
     list_canvas = tk.Canvas(sidebar, bg=theme["chat_sidebar_bg"], highlightthickness=0)
     list_scroll = tk.Scrollbar(sidebar, orient="vertical", command=list_canvas.yview)
     friends_list_frame = tk.Frame(list_canvas, bg=theme["chat_sidebar_bg"])
@@ -71,6 +104,7 @@ def create_chat(parent):
         for w in friends_list_frame.winfo_children():
             w.destroy()
         avatar_refs.clear()
+        status_widgets.clear() # Очищаем старые ссылки при перерисовке списка
 
         for f in get_friends_list(my_nick):
             unread = get_unread_count(my_nick, f)
@@ -86,11 +120,41 @@ def create_chat(parent):
             lbl_avatar = tk.Label(row, image=avatar_img, bg=row_bg)
             lbl_avatar.pack(side=tk.LEFT, padx=8, pady=6)
 
-            name_text = f if unread == 0 else f"{f}  ({unread if unread <= 99 else '99+'})"
-            lbl_name = tk.Label(row, text=name_text, bg=row_bg, fg=row_fg, font=("Segoe UI", 10))
-            lbl_name.pack(side=tk.LEFT)
+            # Контейнер для имени и статуса "был в сети"
+            info_block = tk.Frame(row, bg=row_bg)
+            info_block.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-            for widget in (row, lbl_avatar, lbl_name):
+            # Верхняя строка контейнера: Имя и цветной кружок
+            name_row = tk.Frame(info_block, bg=row_bg)
+            name_row.pack(side=tk.TOP, fill=tk.X, anchor="w", pady=(2, 0))
+
+            name_text = f if unread == 0 else f"{f}  ({unread if unread <= 99 else '99+'})"
+            lbl_name = tk.Label(name_row, text=name_text, bg=row_bg, fg=row_fg, font=("Segoe UI", 10, "bold" if unread > 0 else "normal"))
+            lbl_name.pack(side=tk.LEFT, anchor="w")
+
+            # Маленький индикатор-кружок (Canvas)
+            dot_canvas = tk.Canvas(name_row, width=10, height=10, bg=row_bg, highlightthickness=0)
+            dot_canvas.pack(side=tk.LEFT, padx=5, pady=4)
+            
+            # Рассчитываем начальный статус
+            dot_color, text_status = calculate_online_status(get_user_last_seen(f))
+            dot_id = dot_canvas.create_oval(2, 2, 9, 9, fill=dot_color, outline="")
+
+            # Нижняя строка контейнера: Время активности (был тогда-то)
+            # Если контакт выбран (активен), ставим приглушенный белый текст, иначе стандартный серый
+            status_fg = "#E0E0E0" if is_selected else theme["muted_text"]
+            lbl_status = tk.Label(info_block, text=text_status, bg=row_bg, fg=status_fg, font=("Segoe UI", 8))
+            lbl_status.pack(side=tk.TOP, anchor="w")
+
+            # Сохраняем ссылки для динамического обновления
+            status_widgets[f] = {
+                "canvas": dot_canvas,
+                "dot_id": dot_id,
+                "status_label": lbl_status,
+                "row_bg": row_bg
+            }
+
+            for widget in (row, lbl_avatar, info_block, name_row, lbl_name, dot_canvas, lbl_status):
                 widget.bind("<Button-1>", lambda e, n=f: select_friend(n))
 
         reqs = get_incoming_requests(my_nick)
@@ -213,6 +277,33 @@ def create_chat(parent):
             txt_output.tag_configure("friend_header", justify='left', foreground=theme["muted_text"], font=("Segoe UI", 7))
             txt_output.config(state=tk.DISABLED); txt_output.see(tk.END); last_msg_count = len(history)
 
-    def sync_loop(): update_chat_window(); refresh_friends(); main_frame.after(2000, sync_loop)
+    def sync_loop():
+        # 1. Говорим базе, что МЫ активны прямо сейчас
+        update_user_activity(my_nick)
+        
+        # 2. Обновляем историю сообщений
+        update_chat_window()
+        
+        # 3. Динамически перерисовываем статусы друзей без пересоздания виджетов списка
+        for friend_name, widgets in status_widgets.items():
+            ts = get_user_last_seen(friend_name)
+            dot_color, text_status = calculate_online_status(ts)
+            
+            # Меняем цвет точки на Canvas
+            widgets["canvas"].itemconfig(widgets["dot_id"], fill=dot_color)
+            # Меняем текст
+            widgets["status_label"].config(text=text_status)
+            
+        # Проверяем заявки в друзья (раз в 2 секунды)
+        reqs = get_incoming_requests(my_nick)
+        if reqs:
+            btn_reqs.config(text=f"Заявки ({len(reqs)})", bg="#25D366", fg="white", command=show_requests)
+            btn_reqs.pack(fill=tk.X, padx=10, pady=(10, 0))
+        else: btn_reqs.pack_forget()
+
+        main_frame.after(2000, sync_loop)
+        
+    # Запускаем первичное наполнение списка и стартуем фоновый цикл
+    refresh_friends()
     sync_loop()
     return main_frame

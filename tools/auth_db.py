@@ -1,10 +1,10 @@
 import sqlite3
 import hashlib
 import os
+import time  # <--- Добавили импорт time для работы с таймштампами
 from datetime import datetime, timedelta
 from tools.paths import DB_NAME
 
-# Путь к сессии делаем ЛОКАЛЬНЫМ (создастся в папке проекта)
 SESSION_FILE = "session.txt"
 
 def init_auth_db():
@@ -14,14 +14,38 @@ def init_auth_db():
                       (id INTEGER PRIMARY KEY, nickname TEXT UNIQUE, phone TEXT UNIQUE, password TEXT)''')
     conn.commit()
 
-    # Добавляем колонку аватарки, если её ещё нет (для тех, у кого база уже существует)
+    # Проверка и добавление колонок avatar и last_seen, если их нет
     cursor.execute("PRAGMA table_info(users)")
     cols = [c[1] for c in cursor.fetchall()]
     if 'avatar' not in cols:
         cursor.execute("ALTER TABLE users ADD COLUMN avatar TEXT")
         conn.commit()
+    if 'last_seen' not in cols:  # <--- Добавляем колонку времени активности
+        cursor.execute("ALTER TABLE users ADD COLUMN last_seen REAL")
+        conn.commit()
 
     conn.close()
+
+# --- Новые функции для работы со статусом ---
+
+def update_user_activity(nickname):
+    """Обновляет таймштамп последней активности пользователя"""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET last_seen = ? WHERE nickname = ?", (time.time(), nickname))
+    conn.commit()
+    conn.close()
+
+def get_user_last_seen(nickname):
+    """Возвращает таймштамп последней активности пользователя"""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT last_seen FROM users WHERE nickname = ?", (nickname,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+# --- Конец новых функций ---
 
 def is_user_exists(nickname, phone):
     conn = sqlite3.connect(DB_NAME)
@@ -36,7 +60,8 @@ def register_user(nickname, phone, password):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     try:
-        cursor.execute("INSERT INTO users (nickname, phone, password) VALUES (?, ?, ?)", (nickname, phone, hashed_pw))
+        cursor.execute("INSERT INTO users (nickname, phone, password, last_seen) VALUES (?, ?, ?, ?)", 
+                       (nickname, phone, hashed_pw, time.time()))
         conn.commit()
         return True
     except sqlite3.IntegrityError: return False
@@ -70,9 +95,10 @@ def login_user(nickname, password):
     conn.close()
     
     if user:
-        # ЗАПИСЫВАЕМ СЕССИЮ В ЛОКАЛЬНЫЙ ФАЙЛ
         with open(SESSION_FILE, "w", encoding="utf-8") as f:
             f.write(f"{user[0]},{user[1]}")
+        # Обновляем активность при успешном входе
+        update_user_activity(user[0])
         return True
     return False
 
@@ -81,9 +107,8 @@ def get_current_user():
     try:
         with open(SESSION_FILE, "r", encoding="utf-8") as f:
             data = f.read().split(",")
-            return data # Вернет [nickname, phone]
+            return data
     except: return None
 
 def check_session_timeout(minutes=0):
-    # Если файл сессии есть — считаем, что залогинены
     return not os.path.exists(SESSION_FILE)

@@ -9,12 +9,14 @@ from tools.profile import create_profile
 from tools.chat import create_chat
 from tools.chat_db import init_chat_db
 from tools.theme import get_theme, toggle_theme, is_dark
+from tools.games import create_games_catalog
+from tools.games_db import init_games_db
 
 class MultiToolApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Modular Python Tool")
-        self.root.geometry("800x600")
+        self.root.geometry("1200x700")
 
         # Текущая открытая страница — нужно, чтобы перерисовать её при смене темы
         self.current_page_func = None
@@ -22,6 +24,7 @@ class MultiToolApp:
         # 1. Инициализируем БД
         init_auth_db()
         init_chat_db()
+        init_games_db() # <-- Запускаем создание нашей отдельной базы игр
 
         # Панели
         self.sidebar = tk.Frame(self.root, width=150)
@@ -43,34 +46,31 @@ class MultiToolApp:
             show_auth_window(self.root, lambda: self.root.deiconify())
 
     def setup_menu(self):
-        # Чистим сайдбар (нужно при перерисовке темы)
-        for w in self.sidebar.winfo_children():
-            w.destroy()
+            # Чистим сайдбар (нужно при перерисовке темы)
+            for w in self.sidebar.winfo_children():
+                w.destroy()
 
-        theme = get_theme()
-        self.sidebar.config(bg=theme["sidebar_bg"])
+            theme = get_theme()
+            self.sidebar.config(bg=theme["sidebar_bg"])
 
-        nav_buttons = [
-            ("🏠 Главная", self.show_main_menu),
-            ("🎲 Рандом", lambda: self.switch_page(create_randomizer)),
-            ("📝 Заметки", lambda: self.switch_page(create_todo)),
-            ("⏰ Таймер", lambda: self.switch_page(create_timer)),
-            ("👤 Профиль", lambda: self.switch_page(create_profile)),
-            ("💬 Чат", lambda: self.switch_page(create_chat)),
-        ]
-        for label, cmd in nav_buttons:
-            tk.Button(self.sidebar, text=label, command=cmd,
-                      bg=theme["sidebar_bg"], fg="white", activebackground=theme["accent"],
-                      relief=tk.FLAT, anchor="w").pack(fill=tk.X, padx=5, pady=2)
+            nav_buttons = [
+                ("🏠 Главная", self.show_main_menu),
+                ("🎲 Рандом", lambda: self.switch_page(create_randomizer)),
+                ("📝 Заметки", lambda: self.switch_page(create_todo)),
+                ("⏰ Таймер", lambda: self.switch_page(create_timer)),
+                ("🎮 Игротека", lambda: self.switch_page(create_games_catalog)),
+                ("👤 Профиль", lambda: self.switch_page(create_profile)),
+                ("💬 Чат", lambda: self.switch_page(create_chat)),
+            ]
+            for label, cmd in nav_buttons:
+                tk.Button(self.sidebar, text=label, command=cmd,
+                        bg=theme["sidebar_bg"], fg="white", activebackground=theme["accent"],
+                        relief=tk.FLAT, anchor="w").pack(fill=tk.X, padx=5, pady=2)
 
-        # Переключатель темы
-        theme_label = "☀️ Светлая тема" if is_dark() else "🌙 Тёмная тема"
-        tk.Button(self.sidebar, text=theme_label, command=self.handle_toggle_theme,
-                  bg=theme["accent"], fg="white", relief=tk.FLAT).pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=(0, 5))
-
-        # Кнопка ВЫХОДА вниз
-        tk.Button(self.sidebar, text="🚪 Выйти", command=self.handle_logout,
-                  bg=theme["danger"], fg="white", relief=tk.FLAT).pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=10)
+            # Переключатель темы
+            theme_label = "☀️ Светлая тема" if is_dark() else "🌙 Тёмная тема"
+            tk.Button(self.sidebar, text=theme_label, command=self.handle_toggle_theme,
+                    bg=theme["accent"], fg="white", relief=tk.FLAT).pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=(0, 5))
 
     def handle_toggle_theme(self):
         toggle_theme()
@@ -89,22 +89,37 @@ class MultiToolApp:
             self.switch_page(self.current_page_func)
 
     def handle_logout(self):
-        if messagebox.askyesno("Выход", "Выйти из аккаунта?"):
-            logout_user()
-            self.root.destroy() # Закрываем, при новом запуске будет окно входа
+            """Разлогинивает пользователя и возвращает на окно авторизации без закрытия приложения"""
+            logout_user() # Удаляем session.txt
+            
+            # Сбрасываем состояние приложения в дефолт
+            self.current_page_func = None
+            self.clear_screen()
+            
+            # Прячем главное окно и вызываем авторизацию
+            self.root.withdraw()
+            show_auth_window(self.root, lambda: [self.root.deiconify(), self.show_main_menu()])
 
     def clear_screen(self):
         for w in self.main_area.winfo_children(): w.destroy()
         for w in self.top_bar.winfo_children(): w.destroy()
 
     def switch_page(self, create_func):
-        self.current_page_func = create_func
-        self.clear_screen()
-        theme = get_theme()
-        tk.Button(self.top_bar, text="← Назад", command=self.show_main_menu,
-                  bg=theme["topbar_bg"], relief=tk.FLAT).pack(side=tk.LEFT, padx=10)
-        page_frame = create_func(self.main_area)
-        page_frame.pack(fill=tk.BOTH, expand=True)
+            self.current_page_func = create_func
+            self.clear_screen()
+            theme = get_theme()
+            tk.Button(self.top_bar, text="← Назад", command=self.show_main_menu,
+                    bg=theme["topbar_bg"], relief=tk.FLAT).pack(side=tk.LEFT, padx=10)
+            
+            # Передаем колбэк handle_logout в профиль или чат, если они его поддерживают
+            if create_func in (create_profile, create_chat):
+                page_frame = create_func(self.main_area, on_logout=self.handle_logout)
+            else:
+                page_frame = create_func(self.main_area)
+                
+            page_frame.pack(fill=tk.BOTH, expand=True)
+
+
 
     def show_main_menu(self):
         self.current_page_func = None
