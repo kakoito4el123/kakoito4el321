@@ -68,8 +68,24 @@ def create_chat(parent, on_logout=None):
 
     btn_reqs = tk.Button(bottom_bar, text="Заявки", relief=tk.FLAT)
 
+    def add_friend_action():
+        target = simpledialog.askstring("Поиск", "Номер или ник:")
+        if not target:
+            return
+        # Вызываем функцию из chat_db и показываем результат
+        try:
+            res = send_friend_request(my_nick, target)
+            if isinstance(res, dict) and res.get("status") == "success":
+                messagebox.showinfo("ОК", "Заявка отправлена")
+            else:
+                msg = res.get("message") if isinstance(res, dict) else str(res)
+                messagebox.showwarning("Ошибка", msg or "Не удалось отправить заявку")
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка при отправке заявки: {e}")
+        refresh_friends()
+
     tk.Button(bottom_bar, text="+ Добавить друга", bg="#25D366", fg="white", font=("Segoe UI", 9, "bold"), relief=tk.FLAT,
-              command=lambda: [send_friend_request(my_nick, simpledialog.askstring("Поиск", "Номер:")), refresh_friends()]).pack(fill=tk.X, padx=10, pady=10)
+              command=add_friend_action).pack(fill=tk.X, padx=10, pady=10)
 
     list_canvas = tk.Canvas(sidebar, bg=theme["chat_sidebar_bg"], highlightthickness=0)
     list_scroll = tk.Scrollbar(sidebar, orient="vertical", command=list_canvas.yview)
@@ -98,6 +114,11 @@ def create_chat(parent, on_logout=None):
         mark_as_read(my_nick, nick)
         last_msg_count = 0
         update_chat_window()
+        try:
+            entry.focus_set()
+        except Exception:
+            pass
+        refresh_friends()
         refresh_friends()
 
     def refresh_friends():
@@ -106,7 +127,9 @@ def create_chat(parent, on_logout=None):
         avatar_refs.clear()
         status_widgets.clear() # Очищаем старые ссылки при перерисовке списка
 
-        for f in get_friends_list(my_nick):
+        friends = get_friends_list(my_nick)
+        print(f"[chat] refresh_friends -> friends for {my_nick}: {friends}")
+        for f in friends:
             unread = get_unread_count(my_nick, f)
             is_selected = (f == current_chat_with)
             row_bg = theme["accent"] if is_selected else theme["chat_sidebar_bg"]
@@ -162,6 +185,11 @@ def create_chat(parent, on_logout=None):
             btn_reqs.config(text=f"Заявки ({len(reqs)})", bg="#25D366", fg="white", command=show_requests)
             btn_reqs.pack(fill=tk.X, padx=10, pady=(10, 0))
         else: btn_reqs.pack_forget()
+
+        # Если текущий выбранный контакт исчез (удалён из друзей), сбрасываем выбор
+        if current_chat_with and current_chat_with not in friends:
+            current_chat_with = None
+            friend_label.config(text="Выберите контакт")
 
     # --- ЧАТ-ЗОНА ---
     chat_container = tk.Frame(main_frame, bg=theme["chat_bg"])
@@ -230,9 +258,17 @@ def create_chat(parent, on_logout=None):
     def send_msg(e=None):
         nonlocal reply_data
         text = entry.get().strip()
-        if text and current_chat_with:
-            final = f"➥ {reply_data}\n{text}" if reply_data else text
-            save_message(my_nick, current_chat_with, final); entry.delete(0, tk.END); close_reply(); update_chat_window()
+        if not current_chat_with:
+            messagebox.showwarning("Чат", "Выберите контакт для отправки сообщения")
+            return
+        if not text:
+            return
+        print(f"[chat] send_msg -> from {my_nick} to {current_chat_with}: {text}")
+        final = f"➥ {reply_data}\n{text}" if reply_data else text
+        save_message(my_nick, current_chat_with, final)
+        entry.delete(0, tk.END)
+        close_reply()
+        update_chat_window()
 
     entry.bind("<Return>", send_msg)
     tk.Button(entry_frame, text="🕊️", font=("Arial", 16), fg=theme["accent"], bg=theme["chat_sidebar_bg"], bd=0, command=send_msg).pack(side=tk.RIGHT, padx=10)
@@ -300,6 +336,12 @@ def create_chat(parent, on_logout=None):
             btn_reqs.config(text=f"Заявки ({len(reqs)})", bg="#25D366", fg="white", command=show_requests)
             btn_reqs.pack(fill=tk.X, padx=10, pady=(10, 0))
         else: btn_reqs.pack_forget()
+
+        # Обновляем список друзей периодически, чтобы отразить изменения из других окон
+        try:
+            refresh_friends()
+        except Exception as e:
+            print(f"[chat] refresh_friends failed: {e}")
 
         main_frame.after(2000, sync_loop)
         

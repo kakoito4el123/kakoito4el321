@@ -8,22 +8,26 @@ from tools.paths import DB_NAME
 SESSION_FILE = "session.txt"
 
 def init_auth_db():
+    import sqlite3
+    from tools.paths import DB_NAME
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
+    
+    # Создаем таблицу, если её не было
     cursor.execute('''CREATE TABLE IF NOT EXISTS users 
-                      (id INTEGER PRIMARY KEY, nickname TEXT UNIQUE, phone TEXT UNIQUE, password TEXT)''')
-    conn.commit()
-
-    # Проверка и добавление колонок avatar и last_seen, если их нет
+                      (nickname TEXT PRIMARY KEY, password TEXT, phone TEXT, avatar TEXT)''')
+    
+    # Проверяем, есть ли колонка created_at, и если нет — добавляем её
     cursor.execute("PRAGMA table_info(users)")
-    cols = [c[1] for c in cursor.fetchall()]
-    if 'avatar' not in cols:
-        cursor.execute("ALTER TABLE users ADD COLUMN avatar TEXT")
+    columns = [column[1] for column in cursor.fetchall()]
+    if 'created_at' not in columns:
+        cursor.execute("ALTER TABLE users ADD COLUMN created_at TEXT")
         conn.commit()
-    if 'last_seen' not in cols:  # <--- Добавляем колонку времени активности
+    # Проверяем, есть ли колонка last_seen, и если нет — добавляем её
+    if 'last_seen' not in columns:
         cursor.execute("ALTER TABLE users ADD COLUMN last_seen REAL")
         conn.commit()
-
+        
     conn.close()
 
 # --- Новые функции для работы со статусом ---
@@ -83,8 +87,24 @@ def get_user_avatar(nickname):
     return row[0] if row and row[0] else None
 
 def logout_user():
+    # При выходе ставим метку last_seen для текущего пользователя, затем удаляем сессию
     if os.path.exists(SESSION_FILE):
-        os.remove(SESSION_FILE)
+        try:
+            with open(SESSION_FILE, "r", encoding="utf-8") as f:
+                data = f.read().split(",")
+                if data:
+                    nickname = data[0]
+                    conn = sqlite3.connect(DB_NAME)
+                    cursor = conn.cursor()
+                    cursor.execute("UPDATE users SET last_seen = ? WHERE nickname = ?", (time.time(), nickname))
+                    conn.commit()
+                    conn.close()
+        except Exception:
+            pass
+        try:
+            os.remove(SESSION_FILE)
+        except Exception:
+            pass
 
 def login_user(nickname, password):
     hashed_pw = hashlib.sha256(password.encode()).hexdigest()
@@ -109,6 +129,16 @@ def get_current_user():
             data = f.read().split(",")
             return data
     except: return None
+
+def get_nickname_by_phone(phone):
+    """Возвращает nickname по номеру телефона или None"""
+    if not phone: return None
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT nickname FROM users WHERE phone = ?", (phone,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else None
 
 def check_session_timeout(minutes=0):
     return not os.path.exists(SESSION_FILE)
