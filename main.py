@@ -1,4 +1,5 @@
 import tkinter as tk
+from types import SimpleNamespace
 from tkinter import messagebox
 from tools.randomizer import create_randomizer
 from tools.todo import create_todo
@@ -20,6 +21,7 @@ class MultiToolApp:
 
         # Текущая открытая страница — нужно, чтобы перерисовать её при смене темы
         self.current_page_func = None
+        self.app_state = SimpleNamespace(running_games={}, active_game_window=None, active_game_id=None)
 
         # 1. Инициализируем БД
         init_auth_db()
@@ -39,6 +41,8 @@ class MultiToolApp:
         self.setup_menu()
         self.show_main_menu()
         self.apply_theme()
+
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         # --- ПРОВЕРКА ЛОГИНА ---
         if check_session_timeout():
@@ -88,6 +92,24 @@ class MultiToolApp:
         else:
             self.switch_page(self.current_page_func)
 
+    def on_close(self):
+        if getattr(self.app_state, "active_game_window", None) is not None:
+            try:
+                self.app_state.active_game_window.destroy()
+            except tk.TclError:
+                pass
+            self.app_state.active_game_window = None
+            self.app_state.active_game_id = None
+        try:
+            self.root.destroy()
+        except tk.TclError:
+            try:
+                # As a fallback, try quitting the mainloop then destroying
+                self.root.quit()
+                self.root.destroy()
+            except Exception:
+                pass
+
     def handle_logout(self):
             """Разлогинивает пользователя и возвращает на окно авторизации без закрытия приложения"""
             logout_user() # Удаляем session.txt
@@ -114,6 +136,8 @@ class MultiToolApp:
             # Передаем колбэк handle_logout в профиль или чат, если они его поддерживают
             if create_func in (create_profile, create_chat):
                 page_frame = create_func(self.main_area, on_logout=self.handle_logout)
+            elif create_func is create_games_catalog:
+                page_frame = create_func(self.main_area, app_state=self.app_state)
             else:
                 page_frame = create_func(self.main_area)
                 
