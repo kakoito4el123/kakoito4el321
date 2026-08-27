@@ -866,10 +866,17 @@ class LauncherAPI:
         result = updater.check_for_updates()
         if not result.get("has_update"):
             return {"status": "up_to_date", "message": "Установлена последняя версия.", "version": updater.get_current_version()}
-        try:
-            return updater.install_latest_update(result)
-        except Exception as exc:
-            return {"status": "error", "message": f"Не удалось установить обновление: {exc}"}
+        def download_update():
+            try:
+                updater.install_latest_update(result)
+            except Exception as exc:
+                updater._update_progress.update(status="error", message=str(exc))
+        import threading
+        threading.Thread(target=download_update, daemon=True).start()
+        return {"status": "downloading", "message": "Загрузка обновления началась."}
+
+    def get_update_progress(self):
+        return updater.get_update_progress()
 
     def mark_launcher_notifications_read(self, notification_ids=None):
         from tools.auth_db import get_current_user

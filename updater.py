@@ -3,10 +3,17 @@ import sys
 import urllib.request
 import json
 import tempfile
-import zipfile
 import subprocess
-import shutil
+import threading
 from pathlib import Path
+
+_update_progress = {
+    "status": "idle",
+    "downloaded": 0,
+    "total": 0,
+    "percent": 0,
+    "message": "",
+}
 
 # ТЕКУЩАЯ ВЕРСИЯ ВАШЕГО ПРИЛОЖЕНИЯ
 def get_current_version():
@@ -80,7 +87,23 @@ def install_latest_update(update_info):
     install_dir = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path.cwd()
     archive_path = Path(tempfile.gettempdir()) / f"launcher-{update_info['latest_version']}.zip"
     script_path = Path(tempfile.gettempdir()) / f"launcher-update-{os.getpid()}.ps1"
-    urllib.request.urlretrieve(update_info["download_url"], archive_path)
+    _update_progress.update(status="downloading", downloaded=0, total=0, percent=0, message="Подготовка загрузки")
+    request = urllib.request.Request(update_info["download_url"], headers={"User-Agent": "Python-App-Updater"})
+    with urllib.request.urlopen(request, timeout=30) as response, open(archive_path, "wb") as archive:
+        total = int(response.headers.get("Content-Length") or update_info.get("file_size_mb", 0) * 1024 * 1024)
+        downloaded = 0
+        _update_progress["total"] = total
+        while True:
+            chunk = response.read(1024 * 256)
+            if not chunk:
+                break
+            archive.write(chunk)
+            downloaded += len(chunk)
+            _update_progress.update(
+                downloaded=downloaded,
+                percent=round(downloaded * 100 / total) if total else 0,
+                message=f"Загружено {downloaded / 1024 / 1024:.1f} МБ"
+            )
 
     script = f"""
 $ErrorActionPreference = 'Stop'
@@ -104,4 +127,9 @@ Remove-Item $MyInvocation.MyCommand.Path -Force
         ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script_path)],
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
+    _update_progress.update(status="ready", percent=100, message="Обновление готово к установке")
     return {"status": "success", "message": "Обновление загружено. Лаунчер перезапустится автоматически."}
+
+
+def get_update_progress():
+    return dict(_update_progress)

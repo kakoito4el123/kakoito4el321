@@ -424,8 +424,11 @@
         .notification-body { color: var(--text-muted); font-size: 13px; line-height: 1.35; }
         .notification-time { color: var(--text-muted); font-size: 11px; margin-top: 6px; }
         .app-version { position: fixed; right: 24px; bottom: 14px; color: var(--text-muted); font-size: 11px; z-index: 20; }
-        .update-action { margin: 8px 12px 12px; display:flex; gap:8px; }
+        .update-action { margin: 8px 12px 12px; display:flex; flex-direction:column; gap:8px; }
         .update-action button { flex:1; padding:8px; border:0; border-radius:8px; cursor:pointer; background:rgba(16,185,129,.18); color:#34d399; }
+        .update-progress { display:none; }
+        .update-progress-bar { height:6px; border-radius:4px; background:rgba(255,255,255,.1); overflow:hidden; }
+        .update-progress-fill { height:100%; width:0; background:#34d399; transition:width .2s; }
         .account-switcher { display:flex; gap:8px; align-items:center; }
         .account-plus { width:42px; height:42px; border-radius:12px; border:1px solid var(--card-border); background:rgba(59,130,246,.15); color:var(--text-color); font-size:24px; cursor:pointer; }
         .account-modal { position:fixed; inset:0; z-index:2000; display:none; align-items:center; justify-content:center; background:rgba(0,0,0,.65); }
@@ -451,7 +454,7 @@
             <button data-category="messages" onclick="filterNotifications('messages', this)">Чаты <span class="category-badge"></span></button>
             <button data-category="updates" onclick="filterNotifications('updates', this)">Обновления <span class="category-badge"></span></button>
         </div>
-        <div class="update-action"><button onclick="checkAndInstallUpdate()">⟳ Проверить обновления</button></div>
+        <div class="update-action"><button onclick="checkAndInstallUpdate()">⟳ Проверить обновления</button><div class="update-progress"><div class="update-progress-bar"><div class="update-progress-fill"></div></div><small class="update-progress-text"></small></div></div>
         <div id="notification-list" class="notification-list"><div style="padding:20px;color:var(--text-muted);">Загрузка...</div></div>
     </div>
     <div id="app-version" class="app-version">Версия: …</div>
@@ -519,9 +522,18 @@
             if (window.pywebview && window.pywebview.api) {
                 window.pywebview.api.get_app_version().then(function(version) {
                     document.getElementById('app-version').innerText = 'Версия: ' + version;
+                }).catch(function() {
+                    document.getElementById('app-version').innerText = 'Версия: неизвестна';
                 });
+            } else {
+                setTimeout(loadAppVersion, 250);
             }
         }
+
+        window.addEventListener('pywebviewready', function() {
+            loadAppVersion();
+            loadNotifications();
+        });
 
         function checkAndInstallUpdate() {
             if (!(window.pywebview && window.pywebview.api)) return;
@@ -535,10 +547,23 @@
                     button.onclick = function() {
                         button.disabled = true;
                         button.innerText = 'Загрузка…';
-                        window.pywebview.api.update_launcher().then(function(updateResult) {
-                            if (updateResult.status === 'success') window.pywebview.api.close_app();
-                            else { button.disabled = false; button.innerText = updateResult.message || 'Ошибка обновления'; }
-                        });
+                        document.querySelector('.update-progress').style.display = 'block';
+                        const progressTimer = setInterval(function() {
+                            window.pywebview.api.get_update_progress().then(function(progress) {
+                                document.querySelector('.update-progress-fill').style.width = progress.percent + '%';
+                                document.querySelector('.update-progress-text').innerText = progress.message || '';
+                                if (progress.status === 'ready') {
+                                    clearInterval(progressTimer);
+                                    button.innerText = 'Перезапуск…';
+                                    window.pywebview.api.close_app();
+                                } else if (progress.status === 'error') {
+                                    clearInterval(progressTimer);
+                                    button.disabled = false;
+                                    button.innerText = progress.message || 'Ошибка обновления';
+                                }
+                            });
+                        }, 250);
+                        window.pywebview.api.update_launcher();
                     };
                     window.receiveLauncherNotification({category:'updates', title:'Доступно обновление v' + result.latest_version, body: result.release_notes || 'Новая версия готова к установке.'});
                     return;
