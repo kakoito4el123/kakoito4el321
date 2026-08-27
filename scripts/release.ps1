@@ -5,7 +5,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-Content -Path VERSION -Value $Version -NoNewline
-git add VERSION index.html main.py main.spec updater.py tools scripts .github
+git add VERSION index.html main.py main.spec updater.py .gitignore tools scripts .github
 git commit -m "Release v$Version"
 git tag "v$Version"
 git push origin HEAD --follow-tags

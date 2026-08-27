@@ -21,6 +21,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -36,9 +38,13 @@ jobs:
         run: python -m pip install -r requirements.txt pyinstaller
       - name: Build executable
         run: pyinstaller --clean --noconfirm main.spec
-      - name: Package release
+      - name: Package launcher
         shell: pwsh
         run: Compress-Archive -Path dist/main/* -DestinationPath "launcher-${{ steps.version.outputs.release_version }}.zip"
+      - name: Package optional game
+        if: ${{ hashFiles('games/it_magnat/game_launcher.exe') != '' }}
+        shell: pwsh
+        run: Compress-Archive -Path games/it_magnat/* -DestinationPath "game-it_magnat.zip"
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
@@ -46,3 +52,9 @@ jobs:
           name: Launcher v${{ steps.version.outputs.release_version }}
           body: ${{ inputs.notes || format('Автоматический релиз v{0}.', steps.version.outputs.release_version) }}
           files: launcher-${{ steps.version.outputs.release_version }}.zip
+      - name: Upload optional game
+        if: ${{ hashFiles('games/it_magnat/game_launcher.exe') != '' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.release_version }}
+          files: game-it_magnat.zip

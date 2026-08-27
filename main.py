@@ -1,5 +1,6 @@
 import webview
 import os
+import sys
 import random
 import sqlite3
 import json
@@ -261,10 +262,20 @@ class LauncherAPI:
                 import subprocess
                 from tools.auth_db import get_current_user
 
-                exe_path = os.path.join(os.path.dirname(__file__), "games", "it_magnat", "game_launcher.exe")
+                bundled_game = os.path.join(
+                    getattr(sys, "_MEIPASS", os.path.dirname(__file__)),
+                    "games", "it_magnat", "game_launcher.exe"
+                )
+                downloaded_game = os.path.join(
+                    APP_DATA_DIR, "games", "it_magnat", "game_launcher.exe"
+                )
+                exe_path = bundled_game if os.path.exists(bundled_game) else downloaded_game
                 if not os.path.exists(exe_path):
-                    print(f"[launch_game_by_id] Файл не найден: {exe_path}")
-                    return {"status": "error", "message": f"Игра не установлена: {exe_path}"}
+                    return {
+                        "status": "error",
+                        "message": "Игра не установлена. Скачайте game-it_magnat.zip из релиза "
+                                   f"и распакуйте в {os.path.join(APP_DATA_DIR, 'games')}."
+                    }
 
                 user_data = get_current_user()
                 nickname = user_data[0] if user_data else "Гость"

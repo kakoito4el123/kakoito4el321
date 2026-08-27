@@ -51,7 +51,7 @@ def check_for_updates():
             download_url = None
             file_size_mb = 0
             for asset in data.get('assets', []):
-                if asset['name'].endswith('.zip'):
+                if asset['name'].startswith('launcher-') and asset['name'].endswith('.zip'):
                     download_url = asset['browser_download_url']
                     file_size_mb = round(asset['size'] / (1024 * 1024), 2)
                     break

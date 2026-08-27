@@ -1,7 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('index.html', '.'), ('games', 'games'), ('*.db', '.'), ('VERSION', '.')]
+datas = [('index.html', '.'), ('*.db', '.'), ('VERSION', '.')]
+if os.path.isdir('games'):
+    datas.append(('games', 'games'))
 binaries = []
 hiddenimports = []
 tmp_ret = collect_all('webview')
