@@ -2,7 +2,7 @@
 import os
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('index.html', '.'), ('*.db', '.'), ('VERSION', '.')]
+datas = [('index.html', '.'), ('VERSION', '.')]
 
 # Папку games не упаковываем в exe, игра будет качаться/подтягиваться отдельно
 binaries = []
