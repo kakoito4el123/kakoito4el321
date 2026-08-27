@@ -2,6 +2,11 @@ import webview
 import os
 import random
 import sqlite3
+import json
+import uuid
+import hashlib
+import updater
+from tools.paths import APP_DATA_DIR, DB_NAME
 from types import SimpleNamespace
 # Твои родные импорты модулей и БД
 from tools.auth_db import init_auth_db, check_session_timeout, logout_user
@@ -20,6 +25,8 @@ class LauncherAPI:
     def _init_databases(self):
         init_auth_db()
         init_chat_db()
+        from tools.notifications_db import init_notifications_db
+        init_notifications_db()
         init_games_db()
         print("Базы данных инициализированы в фоне.")
 
@@ -100,8 +107,8 @@ class LauncherAPI:
             root.overrideredirect(True)
             root.geometry("0x0+0+0")
 
-            # Временный костыль: подменяем стандартный messagebox.showinfo внутри потока,
-            # чтобы он не ломал поток (перенаправляем вывод в консоль)
+            # Авторизация работает в отдельном Tk-потоке, поэтому системные диалоги
+            # оставляем локальными, а важные события дополнительно отправляем в web UI.
             from tkinter import messagebox
             original_showinfo = messagebox.showinfo
             messagebox.showinfo = lambda title, message: print(f"[{title}] {message}")
@@ -110,13 +117,38 @@ class LauncherAPI:
 
             def on_success():
                 login_status["success"] = True
+                from tools.notifications_db import clear_verification_notifications
+                clear_verification_notifications()
                 auth_win.destroy()
                 root.quit()
 
+            def on_code(code):
+                if webview.windows:
+                    from tools.notifications_db import add_notification, clear_verification_notifications
+                    clear_verification_notifications()
+                    add_notification(
+                        "",
+                        "system",
+                        "Код подтверждения регистрации",
+                        f"Ваш код: {code}",
+                        metadata={"verification_code": True},
+                    )
+                    payload = json.dumps({
+                        "category": "system",
+                        "title": "Код подтверждения регистрации",
+                        "body": f"Ваш код: {code}",
+                        "metadata": {"verification_code": True},
+                    }, ensure_ascii=False)
+                    webview.windows[0].evaluate_js(
+                        f"window.receiveLauncherNotification({payload})"
+                    )
+
             # Инициализируем твое окно
-            auth_win = show_auth_window(root, on_success)
+            auth_win = show_auth_window(root, on_success, on_code)
             
             def on_close_win():
+                from tools.notifications_db import clear_verification_notifications
+                clear_verification_notifications()
                 auth_win.destroy()
                 root.quit()
             auth_win.protocol("WM_DELETE_WINDOW", on_close_win)
@@ -571,7 +603,11 @@ class LauncherAPI:
             if not user:
                 return {"status": "error", "message": "Не авторизованы"}
             my = user[0]
-            return send_friend_request(my, target)
+            result = send_friend_request(my, target)
+            if result.get("status") == "success":
+                from tools.notifications_db import add_notification
+                add_notification(target, "friends", "Новая заявка в друзья", f"{my} хочет добавить вас в друзья")
+            return result
         except Exception as e:
             print(f"[Python Друзья] Ошибка send_launcher_friend_request: {e}")
             return {"status": "error", "message": str(e)}
@@ -627,26 +663,72 @@ class LauncherAPI:
             return {"status": "error", "message": str(e)}
 
     def get_todo_tasks(self):
+        from tools.auth_db import get_current_user
+        from tools.supabase_client import is_supabase_configured, load_json_store
+        user = get_current_user()
+        if not user:
+            return []
+        user_id = user[2] or user[0] if len(user) > 2 else user[0]
+        if is_supabase_configured():
+            return [
+                {"id": item.get("id"), "task": item.get("task", "")}
+                for item in load_json_store("todos", default=[])
+                if item.get("user_id") == user_id
+            ]
         conn = sqlite3.connect("todo.db")
+        conn.execute("CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY, task TEXT, user_id TEXT)")
+        try:
+            conn.execute("ALTER TABLE tasks ADD COLUMN user_id TEXT")
+        except sqlite3.OperationalError:
+            pass
         cursor = conn.cursor()
-        cursor.execute("SELECT id, task FROM tasks")
+        cursor.execute("SELECT id, task FROM tasks WHERE user_id = ?", (user_id,))
         rows = cursor.fetchall()
         conn.close()
         return [{"id": row[0], "task": row[1]} for row in rows]
 
     def add_todo_task(self, task_text):
+        from tools.auth_db import get_current_user
+        from tools.supabase_client import is_supabase_configured, load_json_store, save_json_store
+        user = get_current_user()
+        if not user:
+            return {"status": "error", "message": "Авторизуйтесь или зарегистрируйтесь"}
         if not task_text.strip(): return {"status": "error"}
+        user_id = user[2] or user[0] if len(user) > 2 else user[0]
+        if is_supabase_configured():
+            todos = load_json_store("todos", default=[])
+            todos.append({"id": str(uuid.uuid4()), "task": task_text, "user_id": user_id})
+            save_json_store("todos", todos[-1000:])
+            return {"status": "success"}
         conn = sqlite3.connect("todo.db")
+        conn.execute("CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY, task TEXT, user_id TEXT)")
+        try:
+            conn.execute("ALTER TABLE tasks ADD COLUMN user_id TEXT")
+        except sqlite3.OperationalError:
+            pass
         cursor = conn.cursor()
-        cursor.execute("INSERT INTO tasks (task) VALUES (?)", (task_text,))
+        cursor.execute("INSERT INTO tasks (task, user_id) VALUES (?, ?)", (task_text, user_id))
         conn.commit()
         conn.close()
         return {"status": "success"}
 
     def delete_todo_task(self, task_id):
+        from tools.auth_db import get_current_user
+        from tools.supabase_client import is_supabase_configured, load_json_store, save_json_store
+        user = get_current_user()
+        if not user:
+            return {"status": "error", "message": "Авторизуйтесь или зарегистрируйтесь"}
+        user_id = user[2] or user[0] if len(user) > 2 else user[0]
+        if is_supabase_configured():
+            todos = [
+                item for item in load_json_store("todos", default=[])
+                if not (item.get("id") == task_id and item.get("user_id") == user_id)
+            ]
+            save_json_store("todos", todos)
+            return {"status": "success"}
         conn = sqlite3.connect("todo.db")
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        cursor.execute("DELETE FROM tasks WHERE id = ? AND user_id = ?", (task_id, user_id))
         conn.commit()
         conn.close()
         return {"status": "success"}
@@ -685,6 +767,8 @@ class LauncherAPI:
                 return {"status": "error", "message": "Нельзя добавить самого себя"}
             res = send_friend_request(my_nick, friend_nick)
             if res.get("status") == "success":
+                from tools.notifications_db import add_notification
+                add_notification(friend_nick, "friends", "Новая заявка в друзья", f"{my_nick} хочет добавить вас в друзья")
                 return {"status": "success", "message": f"Заявка отправлена пользователю {friend_nick}!"}
             return res
         except Exception as e:
@@ -736,11 +820,198 @@ class LauncherAPI:
                 return {"status": "error", "message": "Этот никнейм уже занят"}
             success = register_user(nickname.strip(), phone.strip(), password)
             if success:
+                from tools.notifications_db import add_notification
+                add_notification(nickname.strip(), "system", "Добро пожаловать!", "Ваш аккаунт создан. Здесь будут появляться важные события.")
                 return {"status": "success", "message": "Регистрация успешна! Теперь вы можете войти."}
             return {"status": "error", "message": "Ошибка регистрации"}
         except Exception as e:
             print(f"[Python Auth] Ошибка регистрации: {e}")
             return {"status": "error", "message": f"Ошибка БД: {e}"}
+
+    def get_launcher_notifications(self):
+        from tools.auth_db import get_current_user
+        from tools.notifications_db import get_notifications
+        user = get_current_user()
+        nickname = user[0] if user else ""
+        notifications = get_notifications(nickname, include_guest=True)
+        if user:
+            from tools.chat_db import get_friends_list, get_unread_count, get_chat_history
+            for friend in get_friends_list(nickname):
+                unread = get_unread_count(nickname, friend)
+                if unread:
+                    history = get_chat_history(nickname, friend)
+                    unread_messages = [
+                        row for row in history
+                        if len(row) >= 6 and row[0] == friend and not row[5]
+                    ]
+                    previews = [str(row[1]) for row in unread_messages[-3:]]
+                    notifications.append({
+                        "id": f"chat-unread-{friend}",
+                        "category": "messages",
+                        "title": f"{unread} непрочитанных сообщений",
+                        "body": f"От {friend}: " + " · ".join(previews),
+                        "created_at": 0,
+                        "is_read": False,
+                        "metadata": {"friend": friend},
+                    })
+        return sorted(notifications, key=lambda row: row.get("created_at", 0), reverse=True)
+
+    def get_app_version(self):
+        return updater.get_current_version()
+
+    def check_launcher_update(self):
+        return updater.check_for_updates()
+
+    def update_launcher(self):
+        result = updater.check_for_updates()
+        if not result.get("has_update"):
+            return {"status": "up_to_date", "message": "Установлена последняя версия.", "version": updater.get_current_version()}
+        try:
+            return updater.install_latest_update(result)
+        except Exception as exc:
+            return {"status": "error", "message": f"Не удалось установить обновление: {exc}"}
+
+    def mark_launcher_notifications_read(self, notification_ids=None):
+        from tools.auth_db import get_current_user
+        from tools.notifications_db import mark_notifications_read
+        user = get_current_user()
+        if user:
+            ids = notification_ids or []
+            chat_ids = [item for item in ids if str(item).startswith("chat-unread-")]
+            if chat_ids:
+                from tools.chat_db import mark_as_read
+                for item in chat_ids:
+                    mark_as_read(user[0], str(item)[12:])
+            mark_notifications_read(user[0], ids)
+        return {"status": "success"}
+
+    def search_launcher_users(self, query):
+        from tools.auth_db import get_current_user
+        from tools.supabase_client import is_supabase_configured, load_json_store
+        query = (query or "").strip().lower()
+        if len(query) < 1:
+            return []
+        current = get_current_user()
+        current_nick = current[0] if current else ""
+        if is_supabase_configured():
+            users = load_json_store("users", default=[])
+            return [
+                {"nickname": row.get("nickname"), "phone": row.get("phone", "")}
+                for row in users
+                if row.get("nickname", "").lower().startswith(query)
+                or row.get("phone", "").lower().startswith(query)
+                if row.get("nickname") != current_nick
+            ][:10]
+        conn = sqlite3.connect(DB_NAME)
+        rows = conn.execute(
+            """SELECT nickname, phone FROM users
+               WHERE (LOWER(nickname) LIKE ? OR phone LIKE ?) AND nickname != ?
+               LIMIT 10""",
+            (f"{query}%", f"{query}%", current_nick),
+        ).fetchall()
+        conn.close()
+        return [{"nickname": row[0], "phone": row[1]} for row in rows]
+
+    def save_launcher_account(self, nickname, phone, password):
+        from tools.auth_db import get_current_user, verify_user_credentials
+        owner = get_current_user()
+        if not owner:
+            return {"status": "error", "message": "Авторизуйтесь или зарегистрируйтесь"}
+        nickname, phone = nickname.strip(), phone.strip()
+        if not verify_user_credentials(nickname, phone, password):
+            return {"status": "error", "message": "Ник, номер или пароль не совпадают"}
+        path = os.path.join(APP_DATA_DIR, "saved_accounts.json")
+        accounts = []
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as stream:
+                    accounts = json.load(stream)
+            except (OSError, json.JSONDecodeError):
+                accounts = []
+        owner_id = owner[2] or owner[0] if len(owner) > 2 else owner[0]
+        accounts = [item for item in accounts if not (item.get("owner_id") == owner_id and item.get("nickname") == nickname)]
+        accounts.append({
+            "owner_id": owner_id,
+            "nickname": nickname,
+            "phone": phone,
+            "password_hash": hashlib.sha256(password.encode()).hexdigest(),
+        })
+        owner_phone = owner[1] if len(owner) > 1 else ""
+        # The reverse link lets the user return to the account that added this one.
+        owner_password_hash = None
+        from tools.supabase_client import is_supabase_configured
+        if is_supabase_configured():
+            from tools.supabase_client import load_json_store
+            owner_row = next((row for row in load_json_store("users", default=[]) if row.get("nickname") == owner[0]), None)
+            if owner_row:
+                owner_password_hash = owner_row.get("password")
+        else:
+            conn = sqlite3.connect(DB_NAME)
+            row = conn.execute("SELECT password FROM users WHERE nickname = ?", (owner[0],)).fetchone()
+            conn.close()
+            if row:
+                owner_password_hash = row[0]
+        if owner_password_hash:
+            accounts = [item for item in accounts if not (item.get("owner_id") == nickname and item.get("nickname") == owner[0])]
+            accounts.append({"owner_id": nickname, "nickname": owner[0], "phone": owner_phone, "password_hash": owner_password_hash})
+        with open(path, "w", encoding="utf-8") as stream:
+            json.dump(accounts, stream, ensure_ascii=False, indent=2)
+        return {"status": "success", "message": "Аккаунт сохранён"}
+
+    def get_saved_launcher_accounts(self):
+        from tools.auth_db import get_current_user
+        owner = get_current_user()
+        if not owner:
+            return []
+        path = os.path.join(APP_DATA_DIR, "saved_accounts.json")
+        if not os.path.exists(path):
+            return []
+        try:
+            with open(path, "r", encoding="utf-8") as stream:
+                accounts = json.load(stream)
+        except (OSError, json.JSONDecodeError):
+            return []
+        owner_id = owner[2] or owner[0] if len(owner) > 2 else owner[0]
+        return [{"nickname": item["nickname"], "phone": item["phone"]} for item in accounts if item.get("owner_id") == owner_id]
+
+    def login_saved_launcher_account(self, nickname):
+        from tools.auth_db import get_current_user, login_user
+        from tools.supabase_client import is_supabase_configured
+        owner = get_current_user()
+        if not owner:
+            return {"status": "error", "message": "Авторизуйтесь или зарегистрируйтесь"}
+        path = os.path.join(APP_DATA_DIR, "saved_accounts.json")
+        try:
+            with open(path, "r", encoding="utf-8") as stream:
+                accounts = json.load(stream)
+        except (OSError, json.JSONDecodeError):
+            accounts = []
+        owner_id = owner[2] or owner[0] if len(owner) > 2 else owner[0]
+        account = next((item for item in accounts if item.get("owner_id") == owner_id and item.get("nickname") == nickname), None)
+        if not account:
+            return {"status": "error", "message": "Сохранённый аккаунт недоступен"}
+        password = account.get("password")
+        if password is None and account.get("password_hash"):
+            password = None
+            # login_user accepts plaintext, so resolve the saved hash through the user record.
+            if is_supabase_configured():
+                from tools.supabase_client import load_json_store
+                user = next((row for row in load_json_store("users", default=[]) if row.get("nickname") == nickname), None)
+                if user and user.get("password") == account["password_hash"]:
+                    with open("session.txt", "w", encoding="utf-8") as stream:
+                        stream.write(f"{user.get('nickname')},{user.get('phone', '')},{user.get('uuid', '')}")
+                    return {"status": "success"}
+            else:
+                conn = sqlite3.connect(DB_NAME)
+                user = conn.execute("SELECT nickname, phone FROM users WHERE nickname = ? AND password = ?", (nickname, account["password_hash"])).fetchone()
+                conn.close()
+                if user:
+                    with open("session.txt", "w", encoding="utf-8") as stream:
+                        stream.write(f"{user[0]},{user[1]},")
+                    return {"status": "success"}
+        if password is None or not login_user(account["nickname"], password):
+            return {"status": "error", "message": "Сохранённый аккаунт недоступен"}
+        return {"status": "success"}
             
     def get_active_chat_partner_info(self):
         """Возвращает информацию для шапки чата"""
@@ -785,6 +1056,23 @@ if __name__ == "__main__":
             except FileNotFoundError:
                 continue
         return False
+
+    def unblock_own_files():
+        """Снимает метку 'файл скачан из интернета' (Zone.Identifier) со всех файлов рядом с .exe.
+        Нужно только в собранной версии — при обычном запуске python main.py не требуется."""
+        import sys
+        if not getattr(sys, "frozen", False):
+            return  # это dev-режим (python main.py), метки блокировки тут не бывает
+        base_dir = os.path.dirname(sys.executable)
+        for root, dirs, files in os.walk(base_dir):
+            for name in files:
+                full_path = os.path.join(root, name)
+                try:
+                    os.remove(f"{full_path}:Zone.Identifier")
+                except (FileNotFoundError, OSError):
+                    pass  # метки и не было на этом файле — это нормально, не ошибка
+
+    unblock_own_files()
 
     if not is_webview2_installed():
         ctypes.windll.user32.MessageBoxW(

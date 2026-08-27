@@ -246,6 +246,26 @@ def login_user(nickname, password):
         return True
     return False
 
+
+def verify_user_credentials(nickname, phone, password):
+    """Проверяет ник, телефон и пароль без изменения текущей сессии."""
+    hashed_pw = hashlib.sha256(password.encode()).hexdigest()
+    if is_supabase_configured():
+        users = load_json_store("users", default=[])
+        return any(
+            row.get("nickname") == nickname
+            and row.get("phone") == phone
+            and row.get("password") == hashed_pw
+            for row in users
+        )
+    conn = sqlite3.connect(DB_NAME)
+    row = conn.execute(
+        "SELECT 1 FROM users WHERE nickname = ? AND phone = ? AND password = ?",
+        (nickname, phone, hashed_pw),
+    ).fetchone()
+    conn.close()
+    return row is not None
+
 def get_current_user():
     if not os.path.exists(SESSION_FILE):
         return None
