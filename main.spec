@@ -3,8 +3,8 @@ import os
 from PyInstaller.utils.hooks import collect_all
 
 datas = [('index.html', '.'), ('*.db', '.'), ('VERSION', '.')]
-if os.path.isdir('games'):
-    datas.append(('games', 'games'))
+
+# Папку games не упаковываем в exe, игра будет качаться/подтягиваться отдельно
 binaries = []
 hiddenimports = []
 tmp_ret = collect_all('webview')
@@ -20,7 +20,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['pythonnet'],
     noarchive=False,
     optimize=0,
 )
