@@ -769,6 +769,35 @@ class LauncherAPI:
         return self.active_contact_id
 
 if __name__ == "__main__":
+    import ctypes
+
+    def is_webview2_installed():
+        # WebView2 Runtime прописывает себя в реестре по этим путям (32-бит и 64-бит машины)
+        import winreg
+        paths = [
+            r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+            r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+        ]
+        for path in paths:
+            try:
+                winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path)
+                return True
+            except FileNotFoundError:
+                continue
+        return False
+
+    if not is_webview2_installed():
+        ctypes.windll.user32.MessageBoxW(
+            0,
+            "Для запуска лаунчера нужен Microsoft Edge WebView2 Runtime.\n\n"
+            "Скачай и установи его отсюда:\n"
+            "https://developer.microsoft.com/microsoft-edge/webview2/\n\n"
+            "После установки запусти лаунчер снова.",
+            "Не найден WebView2 Runtime",
+            0x10
+        )
+        exit(1)
+
     api = LauncherAPI()
 
     window = webview.create_window(
@@ -781,4 +810,4 @@ if __name__ == "__main__":
         js_api=api
     )
 
-    webview.start()
+    webview.start(gui='edgechromium')
