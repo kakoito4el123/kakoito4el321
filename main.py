@@ -273,8 +273,7 @@ class LauncherAPI:
                 if not os.path.exists(exe_path):
                     return {
                         "status": "error",
-                        "message": "Игра не установлена. Скачайте game-it_magnat.zip из релиза "
-                                   f"и распакуйте в {os.path.join(APP_DATA_DIR, 'games')}."
+                        "message": "Игра не установлена. Нажмите «Скачать игру» в каталоге."
                     }
 
                 user_data = get_current_user()
@@ -364,6 +363,13 @@ class LauncherAPI:
 
         except Exception as exc:
             print(f"[Python Лаунчер] Ошибка запуска игры: {exc}")
+            return {"status": "error", "message": str(exc)}
+
+    def install_game(self):
+        try:
+            return updater.install_game()
+        except Exception as exc:
+            updater._update_progress.update(status="error", message=str(exc))
             return {"status": "error", "message": str(exc)}
 
     def stop_game_by_id(self, game_id):

@@ -512,6 +512,11 @@
             loadFriendsList();
             loadNotifications();
             loadAppVersion();
+            setInterval(function() {
+                if (window.pywebview && window.pywebview.api) {
+                    window.pywebview.api.ping_user_activity();
+                }
+            }, 30000);
             setInterval(loadNotifications, 5000);
         });
         let countdownInterval = null;
@@ -1499,7 +1504,20 @@
             window.pywebview.api.launch_game_by_id(gameId).then(function(res) {
                 if (btn) btn.disabled = false;
                 if (res.status === 'error') {
-                    alert("Ошибка запуска: " + res.message);
+                    if (res.message && res.message.indexOf('Нажмите') >= 0) {
+                        if (!confirm('Игра не установлена. Скачать её сейчас?')) return;
+                        if (btn) btn.textContent = '⏳ Скачивание...';
+                        window.pywebview.api.install_game().then(function(download) {
+                            if (download.status !== 'success') {
+                                alert(download.message || 'Не удалось скачать игру');
+                                if (btn) btn.textContent = 'Запустить';
+                                return;
+                            }
+                            runGame(gameId);
+                        });
+                    } else {
+                        alert("Ошибка запуска: " + res.message);
+                    }
                     if (btn) btn.textContent = 'Запустить';
                     if (statusEl) statusEl.textContent = '';
                 } else {

@@ -306,8 +306,10 @@ def reject_friend_request(my_nick, friend_nick):
         conn.close()
 
 
-def get_friends_list(my_nick):
-    cached = cache_get(f"friends:{my_nick}")
+def get_friends_list(my_nick, force_refresh=False):
+    if force_refresh:
+        cache_invalidate(f"friends:{my_nick}")
+    cached = None if force_refresh else cache_get(f"friends:{my_nick}", max_age=5)
     if cached is not None:
         return cached
 
@@ -389,12 +391,12 @@ def save_message(sender, receiver, content, is_image=0):
     return result_row
 
 
-def get_chat_history(user1, user2):
+def get_chat_history(user1, user2, force_refresh=False):
     cache_key = _chat_cache_key(user1, user2)
 
-    if is_supabase_configured():
+    if force_refresh:
         cache_invalidate(cache_key)
-    cached = cache_get(cache_key)
+    cached = None if force_refresh else cache_get(cache_key, max_age=3)
     if cached is not None:
         return cached
 

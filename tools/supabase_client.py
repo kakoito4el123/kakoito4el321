@@ -37,7 +37,7 @@ def is_supabase_configured():
 
 def load_json_store(name, default=None):
     cache_key = f"store:{name}"
-    cached = cache_get(cache_key)
+    cached = cache_get(cache_key, max_age=3 if name == "messages" else None)
     if cached is not None:
         return cached
 

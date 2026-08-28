@@ -5,6 +5,7 @@ import json
 import tempfile
 import subprocess
 import threading
+import zipfile
 from pathlib import Path
 
 _update_progress = {
@@ -26,6 +27,7 @@ def get_current_version():
 # Ссылка на GitHub API вашего репозитория
 GITHUB_REPO = "kakoito4el123/kakoito4el321"
 API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+GAME_DIR = Path(os.path.expanduser("~")) / ".modular_chat_app" / "games" / "it_magnat"
 
 def check_for_updates():
     """
@@ -134,3 +136,40 @@ Remove-Item $MyInvocation.MyCommand.Path -Force
 
 def get_update_progress():
     return dict(_update_progress)
+
+
+def install_game():
+    """Downloads and installs the game asset into the user's application folder."""
+    request = urllib.request.Request(API_URL, headers={"User-Agent": "Python-App-Updater"})
+    with urllib.request.urlopen(request, timeout=15) as response:
+        release = json.loads(response.read().decode("utf-8"))
+    asset = next(
+        (item for item in release.get("assets", []) if item.get("name") == "game-it_magnat.zip"),
+        None,
+    )
+    if not asset:
+        return {"status": "error", "message": "Игра пока не опубликована в последнем релизе"}
+
+    archive_path = Path(tempfile.gettempdir()) / "game-it_magnat.zip"
+    _update_progress.update(status="downloading", downloaded=0, total=asset.get("size", 0), percent=0,
+                            message="Загрузка игры")
+    game_request = urllib.request.Request(asset["browser_download_url"], headers={"User-Agent": "Python-App-Updater"})
+    with urllib.request.urlopen(game_request, timeout=30) as response, open(archive_path, "wb") as archive:
+        total = int(response.headers.get("Content-Length") or asset.get("size", 0))
+        downloaded = 0
+        _update_progress["total"] = total
+        while chunk := response.read(1024 * 256):
+            archive.write(chunk)
+            downloaded += len(chunk)
+            _update_progress.update(
+                downloaded=downloaded,
+                percent=round(downloaded * 100 / total) if total else 0,
+                message=f"Загрузка игры: {downloaded / 1024 / 1024:.1f} МБ",
+            )
+
+    GAME_DIR.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(archive_path) as archive:
+        archive.extractall(GAME_DIR)
+    archive_path.unlink(missing_ok=True)
+    _update_progress.update(status="ready", percent=100, message="Игра установлена")
+    return {"status": "success", "message": "Игра установлена"}
