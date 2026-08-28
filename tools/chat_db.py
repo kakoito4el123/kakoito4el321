@@ -133,7 +133,6 @@ def mark_as_read(my_nick, friend_nick):
 def get_unread_count(my_nick, friend_nick):
     if is_supabase_configured():
         try:
-            cache_invalidate("store:messages")
             messages = load_json_store("messages", default=[])
             return sum(1 for m in messages if m.get("sender") == friend_nick and m.get("receiver") == my_nick and m.get("is_read") == 0)
         except Exception as exc:
@@ -308,8 +307,6 @@ def reject_friend_request(my_nick, friend_nick):
 
 
 def get_friends_list(my_nick):
-    if is_supabase_configured():
-        cache_invalidate(f"friends:{my_nick}")
     cached = cache_get(f"friends:{my_nick}")
     if cached is not None:
         return cached

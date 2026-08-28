@@ -65,7 +65,6 @@ def get_user_last_seen(nickname):
     """Возвращает таймштамп последней активности пользователя"""
     if is_supabase_configured():
         try:
-            cache_invalidate("store:users")
             users = load_json_store("users", default=[])
             for row in users:
                 if row.get("nickname") == nickname:

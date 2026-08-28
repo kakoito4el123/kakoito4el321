@@ -711,6 +711,7 @@
         function loginSavedAccount(nickname) {
             window.pywebview.api.login_saved_launcher_account(nickname).then(function(result) {
                 if (result.status === 'success') {
+                    resetChatState();
                     closeAccountManager();
                     switchTab('profile');
                     loadNotifications();
@@ -1055,12 +1056,15 @@
         // --- ПЕРЕМЕННЫЕ И ЦИКЛЫ ДЛЯ ЧАТА ---
         let chatInterval = null;
         let friendsInterval = null;
+        let chatPageActive = false;
 
         // Очищаем таймер чата, если уходим на другую вкладку
         const originalSwitchTab = switchTab;
         switchTab = function(btn, pageId) {
             if (chatInterval) { clearInterval(chatInterval); chatInterval = null; }
             if (friendsInterval) { clearInterval(friendsInterval); friendsInterval = null; }
+            chatPageActive = pageId === 'chat';
+            if (pageId === 'chat') resetChatState();
             originalSwitchTab(btn, pageId);
             if (pageId === 'chat') startChatAutoRefresh();
         }
@@ -1105,9 +1109,12 @@
 
         function loadChatHistory() {
             if (!currentPartner || !(window.pywebview && window.pywebview.api)) return;
-            window.pywebview.api.get_chat_history_for_js(currentPartner).then(function(messages) {
-                rememberChatHistory(currentPartner, messages);
-                renderChatMessages(messages, currentPartner);
+            const partnerAtRequest = currentPartner;
+            window.pywebview.api.get_chat_history_for_js(partnerAtRequest).then(function(messages) {
+                rememberChatHistory(partnerAtRequest, messages);
+                if (chatPageActive && currentPartner === partnerAtRequest) {
+                    renderChatMessages(messages, partnerAtRequest);
+                }
             });
         }
 
@@ -1384,10 +1391,24 @@
         }
         function startChatAutoRefresh() {
             if (chatInterval) clearInterval(chatInterval);
-            // Раз в 2 секунды запрашиваем новые сообщения из бэкэнда, как в твоем исходном коде
-            chatInterval = setInterval(loadChatHistory, 2000);
+            chatInterval = setInterval(loadChatHistory, 3000);
             if (friendsInterval) clearInterval(friendsInterval);
-            friendsInterval = setInterval(loadFriendsList, 2000);
+            friendsInterval = setInterval(loadFriendsList, 5000);
+        }
+
+        function resetChatState() {
+            currentPartner = null;
+            chatRam.histories.clear();
+            chatRam.pending.clear();
+            const name = document.getElementById('chat-partner-name');
+            const history = document.getElementById('chat-history-container');
+            const input = document.getElementById('chat-input-panel');
+            if (name) name.innerText = 'Выберите контакт';
+            if (history) {
+                history.innerHTML = '';
+                history.style.display = 'none';
+            }
+            if (input) input.style.display = 'none';
         }
 
         function loadGamesCatalog() {
