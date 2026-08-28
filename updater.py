@@ -128,7 +128,7 @@ Remove-Item $MyInvocation.MyCommand.Path -Force
         ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script_path)],
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
-    _update_progress.update(status="ready", percent=100, message="Обновление готово к установке")
+    _update_progress.update(status="ready", percent=100, message="Загрузка завершена. Перезапуск...")
     return {"status": "success", "message": "Обновление загружено. Лаунчер перезапустится автоматически."}
 
 

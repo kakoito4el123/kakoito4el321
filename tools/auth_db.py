@@ -6,6 +6,7 @@ from datetime import datetime
 import uuid as uuid_lib
 from tools.paths import DB_NAME
 from tools.supabase_client import get_supabase_client, is_supabase_configured, load_json_store, save_json_store
+from tools.cache import cache_invalidate
 
 SESSION_FILE = "session.txt"
 

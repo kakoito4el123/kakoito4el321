@@ -308,6 +308,8 @@ def reject_friend_request(my_nick, friend_nick):
 
 
 def get_friends_list(my_nick):
+    if is_supabase_configured():
+        cache_invalidate(f"friends:{my_nick}")
     cached = cache_get(f"friends:{my_nick}")
     if cached is not None:
         return cached
@@ -393,6 +395,8 @@ def save_message(sender, receiver, content, is_image=0):
 def get_chat_history(user1, user2):
     cache_key = _chat_cache_key(user1, user2)
 
+    if is_supabase_configured():
+        cache_invalidate(cache_key)
     cached = cache_get(cache_key)
     if cached is not None:
         return cached
