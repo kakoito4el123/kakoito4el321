@@ -1054,12 +1054,15 @@
 
         // --- ПЕРЕМЕННЫЕ И ЦИКЛЫ ДЛЯ ЧАТА ---
         let chatInterval = null;
+        let friendsInterval = null;
 
         // Очищаем таймер чата, если уходим на другую вкладку
         const originalSwitchTab = switchTab;
         switchTab = function(btn, pageId) {
             if (chatInterval) { clearInterval(chatInterval); chatInterval = null; }
+            if (friendsInterval) { clearInterval(friendsInterval); friendsInterval = null; }
             originalSwitchTab(btn, pageId);
+            if (pageId === 'chat') startChatAutoRefresh();
         }
 
 // --- ОБНОВЛЕННАЯ ЗАГРУЗКА ТВОЕГО ПРОФИЛЯ ИЗ БАЗЫ ---
@@ -1187,6 +1190,8 @@
             if (mins < 60) return 'был(а) менее часа назад';
             const hours = Math.floor(mins/60);
             if (hours < 24) return hours === 1 ? 'был(а) более часа назад' : `был(а) ${hours} ч. назад`;
+            const days = Math.floor(hours / 24);
+            if (days < 7) return `был(а) ${days} дн. назад`;
             return 'был(а) давно';
         }
 
@@ -1381,6 +1386,8 @@
             if (chatInterval) clearInterval(chatInterval);
             // Раз в 2 секунды запрашиваем новые сообщения из бэкэнда, как в твоем исходном коде
             chatInterval = setInterval(loadChatHistory, 2000);
+            if (friendsInterval) clearInterval(friendsInterval);
+            friendsInterval = setInterval(loadFriendsList, 2000);
         }
 
         function loadGamesCatalog() {

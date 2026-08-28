@@ -591,7 +591,9 @@ class LauncherAPI:
                 header, b64 = text.split(',', 1)
                 try:
                     data = base64.b64decode(b64)
-                    save_message(my, receiver, data, is_image=1)
+                    saved = save_message(my, receiver, data, is_image=1)
+                    if saved is None:
+                        return {"status": "error", "message": "Сообщение не сохранено"}
                     return {"status": "success"}
                 except Exception as e:
                     print(f"[Python Чат] Ошибка при сохранении картинки: {e}")
@@ -600,7 +602,9 @@ class LauncherAPI:
             # Обычный текст
             if not text:
                 return {"status": "error", "message": "Пустое сообщение"}
-            save_message(my, receiver, text, is_image=0)
+            saved = save_message(my, receiver, text, is_image=0)
+            if saved is None:
+                return {"status": "error", "message": "Сообщение не сохранено"}
             return {"status": "success"}
         except Exception as e:
             print(f"[Python Чат] Ошибка send_launcher_message: {e}")
@@ -856,12 +860,18 @@ class LauncherAPI:
                         if len(row) >= 6 and row[0] == friend and not row[5]
                     ]
                     previews = [str(row[1]) for row in unread_messages[-3:]]
+                    latest_time = unread_messages[-1][2] if unread_messages else ""
+                    try:
+                        from datetime import datetime
+                        latest_created_at = datetime.strptime(latest_time, "%Y-%m-%d %H:%M:%S").timestamp()
+                    except (TypeError, ValueError, OSError):
+                        latest_created_at = 0
                     notifications.append({
                         "id": f"chat-unread-{friend}",
                         "category": "messages",
                         "title": f"{unread} непрочитанных сообщений",
                         "body": f"От {friend}: " + " · ".join(previews),
-                        "created_at": 0,
+                        "created_at": latest_created_at,
                         "is_read": False,
                         "metadata": {"friend": friend},
                     })
