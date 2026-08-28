@@ -117,6 +117,7 @@ Expand-Archive -Path $archive -DestinationPath $temp -Force
 $payload = Join-Path $temp 'main'
 if (Test-Path (Join-Path $temp 'main.exe')) {{ $payload = $temp }}
 Copy-Item (Join-Path $payload '*') $target -Recurse -Force
+Get-ChildItem -Path $target -Recurse -File | Unblock-File -ErrorAction SilentlyContinue
 Start-Process (Join-Path $target 'main.exe')
 Remove-Item $archive -Force
 Remove-Item $temp -Recurse -Force

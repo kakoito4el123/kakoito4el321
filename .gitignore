@@ -9,3 +9,5 @@ login_cache.txt
 *.pck
 build/
 dist/
+game-it_magnat.zip
+launcher-*.zip
